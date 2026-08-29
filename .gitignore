@@ -12,3 +12,17 @@ external/Practical-RIFE/
 
 # Temp DMG mount
 2/
+
+# Build outputs / artifacts
+Rift-release.app/
+
+# Test media and partial downloads
+*.webm
+*.part
+test_video.mp4
+
+# Screenshots
+deployed-fullpage.png
+local-fullpage.png
+release-page.png
+
