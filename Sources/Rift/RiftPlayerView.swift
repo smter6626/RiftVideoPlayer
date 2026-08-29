@@ -2,8 +2,11 @@ import AVFoundation
 import AppKit
 import CoreImage
 import MetalKit
+import OSLog
 import QuartzCore
 import SwiftUI
+
+private let playerViewLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Rift", category: "Video")
 
 struct RiftPlayerView: NSViewRepresentable {
     let player: AVPlayer
@@ -138,8 +141,6 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
 
     // FIX: contador de frames únicos para el stat de FPS real de Frame+
     private var framePlusUniqueFrameCount = 0
-    private var framePlusInterpolatedCount = 0
-    private var framePlusFallbackCount = 0
     private var framePlusStatsStart = CACurrentMediaTime()
 
     private var previousFrame: CVPixelBuffer?
@@ -394,6 +395,7 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
             do {
                 try await self.rifeInterpolator.loadEngine()
             } catch {
+                playerViewLogger.error("RIFE engine failed to load: \(error.localizedDescription)")
                 self.rifeFailureBackoffUntil = CACurrentMediaTime() + 3.0
             }
         }
@@ -633,6 +635,7 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
                 timestep: timestep
             )
         } catch {
+            playerViewLogger.error("Frame⁺ MEMC encode failed, falling back to crossfade: \(error.localizedDescription)")
             return nil
         }
 
@@ -662,8 +665,6 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
         guard prefetcher == nil, let output = videoOutput else { return }
         frameBuffer.reset()
         framePlusUniqueFrameCount = 0
-        framePlusInterpolatedCount = 0
-        framePlusFallbackCount = 0
         framePlusStatsStart = CACurrentMediaTime()
         let p = FramePrefetcher(output: output, buffer: frameBuffer)
         p.start()
@@ -684,8 +685,6 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
         framePlusDisplayPulse = 0
         frameBuffer.reset()
         framePlusUniqueFrameCount = 0
-        framePlusInterpolatedCount = 0
-        framePlusFallbackCount = 0
         framePlusStatsStart = CACurrentMediaTime()
     }
 

@@ -1,6 +1,9 @@
 @preconcurrency import AVFoundation
 @preconcurrency import CoreImage
+@preconcurrency import OSLog
 @preconcurrency import Vision
+
+private let flowLogger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Rift", category: "OpticalFlow")
 
 struct OpticalFlowSnapshot {
     let pixelBuffer: CVPixelBuffer
@@ -112,6 +115,7 @@ final class OpticalFlowEngine: @unchecked Sendable {
                 self.lock.lock()
                 self.latestFlow = nil
                 self.lock.unlock()
+                flowLogger.error("Optical flow request failed: \(error.localizedDescription)")
             }
         }
     }

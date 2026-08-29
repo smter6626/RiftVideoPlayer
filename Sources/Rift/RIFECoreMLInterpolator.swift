@@ -46,7 +46,7 @@ final class RIFECoreMLInterpolator {
         guard let modelURL = Self.findBundledModelURL() else {
             state = .unavailable
             engine = nil
-            return
+            throw RIFEError.modelLoad("RIFE model (RIFE.mlpackage) not found in the app bundle")
         }
 
         do {

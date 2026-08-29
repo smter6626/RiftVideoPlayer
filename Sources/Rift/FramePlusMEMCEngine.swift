@@ -71,11 +71,11 @@ final class FramePlusMEMCEngine {
 
         var params = makeParams(width: width, height: height, timestep: timestep)
 
-        encodeDownsample(source: frameA, destination: lowA, params: &params, commandBuffer: commandBuffer)
-        encodeDownsample(source: frameB, destination: lowB, params: &params, commandBuffer: commandBuffer)
-        encodeMotionEstimate(lowA: lowA, lowB: lowB, vectors: vectorsRaw, params: &params, commandBuffer: commandBuffer)
-        encodeVectorFilter(input: vectorsRaw, output: vectorsFiltered, params: &params, commandBuffer: commandBuffer)
-        encodeWarp(frameA: frameA, frameB: frameB, vectors: vectorsFiltered, output: output, params: &params, commandBuffer: commandBuffer)
+        try encodeDownsample(source: frameA, destination: lowA, params: &params, commandBuffer: commandBuffer)
+        try encodeDownsample(source: frameB, destination: lowB, params: &params, commandBuffer: commandBuffer)
+        try encodeMotionEstimate(lowA: lowA, lowB: lowB, vectors: vectorsRaw, params: &params, commandBuffer: commandBuffer)
+        try encodeVectorFilter(input: vectorsRaw, output: vectorsFiltered, params: &params, commandBuffer: commandBuffer)
+        try encodeWarp(frameA: frameA, frameB: frameB, vectors: vectorsFiltered, output: output, params: &params, commandBuffer: commandBuffer)
     }
 
     private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
@@ -165,8 +165,8 @@ final class FramePlusMEMCEngine {
         return CVMetalTextureGetTexture(cvTexture)
     }
 
-    private func encodeDownsample(source: MTLTexture, destination: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) {
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+    private func encodeDownsample(source: MTLTexture, destination: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) throws {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw FramePlusMEMCError.encoder }
         encoder.setComputePipelineState(downsamplePipeline)
         encoder.setTexture(source, index: 0)
         encoder.setTexture(destination, index: 1)
@@ -175,8 +175,8 @@ final class FramePlusMEMCEngine {
         encoder.endEncoding()
     }
 
-    private func encodeMotionEstimate(lowA: MTLTexture, lowB: MTLTexture, vectors: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) {
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+    private func encodeMotionEstimate(lowA: MTLTexture, lowB: MTLTexture, vectors: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) throws {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw FramePlusMEMCError.encoder }
         encoder.setComputePipelineState(estimatePipeline)
         encoder.setTexture(lowA, index: 0)
         encoder.setTexture(lowB, index: 1)
@@ -186,8 +186,8 @@ final class FramePlusMEMCEngine {
         encoder.endEncoding()
     }
 
-    private func encodeVectorFilter(input: MTLTexture, output: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) {
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+    private func encodeVectorFilter(input: MTLTexture, output: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) throws {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw FramePlusMEMCError.encoder }
         encoder.setComputePipelineState(filterPipeline)
         encoder.setTexture(input, index: 0)
         encoder.setTexture(output, index: 1)
@@ -196,8 +196,8 @@ final class FramePlusMEMCEngine {
         encoder.endEncoding()
     }
 
-    private func encodeWarp(frameA: MTLTexture, frameB: MTLTexture, vectors: MTLTexture, output: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) {
-        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { return }
+    private func encodeWarp(frameA: MTLTexture, frameB: MTLTexture, vectors: MTLTexture, output: MTLTexture, params: inout Params, commandBuffer: MTLCommandBuffer) throws {
+        guard let encoder = commandBuffer.makeComputeCommandEncoder() else { throw FramePlusMEMCError.encoder }
         encoder.setComputePipelineState(warpPipeline)
         encoder.setTexture(frameA, index: 0)
         encoder.setTexture(frameB, index: 1)
@@ -227,4 +227,5 @@ enum FramePlusMEMCError: Error {
     case function(String)
     case textureCreation
     case resolutionMismatch
+    case encoder
 }

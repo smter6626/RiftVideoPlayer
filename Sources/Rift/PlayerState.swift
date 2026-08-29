@@ -6,6 +6,8 @@ import OSLog
 import SwiftUI
 import UniformTypeIdentifiers
 
+private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Rift", category: "PlayerState")
+
 enum PlaybackBackend {
     case avFoundation
     case directFFmpeg
@@ -805,6 +807,7 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
             )
             return true
         } catch {
+            logger.error("Failed to create compatible-video cache directory: \(error.localizedDescription)")
             return false
         }
     }
@@ -871,7 +874,10 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
     }
 
     private func inspectCodecs(for url: URL) async -> [StreamInfo] {
-        guard let ffprobeURL = findFFprobe() else { return [] }
+        guard let ffprobeURL = findFFprobe() else {
+            logger.warning("ffprobe not found in PATH; codec/track list will be empty")
+            return []
+        }
 
         let process = Process()
         process.executableURL = ffprobeURL
@@ -923,12 +929,19 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
                 )
             }
         } catch {
+            logger.error("ffprobe codec inspection failed: \(error.localizedDescription)")
             return []
         }
     }
 
     private func inspectDuration(for url: URL) async -> Double? {
-        guard let ffprobeURL = findFFprobe() else { return nil }
+        guard let ffprobeURL = findFFprobe() else {
+            logger.warning("ffprobe not found in PATH; duration/codec info will be limited")
+            if statusMessage == nil {
+                statusMessage = NSLocalizedString("ffprobe not found — duration and codec info may be limited", comment: "")
+            }
+            return nil
+        }
 
         let process = Process()
         process.executableURL = ffprobeURL
@@ -1536,12 +1549,16 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
                 if isComplete,
                    let playlist = try? String(contentsOf: source, encoding: .utf8),
                    playlist.contains("#EXT-X-ENDLIST") {
-                    _ = Self.writeMirroredHLSPlaylist(
+                    let wrote = Self.writeMirroredHLSPlaylist(
                         from: source,
                         to: playback,
                         maxSegments: nil,
                         revealDuration: nil
                     )
+                    if !wrote {
+                        logger.error("HLS playlist completed but mirrored write failed; playback may be stale")
+                        statusMessage = NSLocalizedString("HLS playlist write failed — playback may be out of date", comment: "")
+                    }
                     break
                 }
 
@@ -1652,12 +1669,16 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
         }
 
         hlsMinimumRevealDuration = max(hlsMinimumRevealDuration, seconds)
-        _ = Self.writeMirroredHLSPlaylist(
+        let wrote = Self.writeMirroredHLSPlaylist(
             from: hlsSourcePlaylistURL,
             to: hlsPlaybackPlaylistURL,
             maxSegments: nil,
             revealDuration: hlsMinimumRevealDuration
         )
+        if !wrote {
+            logger.error("HLS reveal update failed to write mirrored playlist")
+            statusMessage = NSLocalizedString("HLS playlist update failed", comment: "")
+        }
     }
 
     nonisolated private static func fileSize(at url: URL) -> UInt64 {
@@ -1764,6 +1785,7 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
                 .write(to: destinationURL, atomically: true, encoding: .utf8)
             return true
         } catch {
+            logger.error("Failed to write mirrored HLS playlist to \(destinationURL.path): \(error.localizedDescription)")
             return false
         }
     }
