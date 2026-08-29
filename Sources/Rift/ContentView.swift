@@ -33,12 +33,10 @@ struct ContentView: View {
     @StateObject private var state = PlayerState()
     @State private var isDropTargeted = false
 
-    @State private var areControlsVisible = true
-    @State private var isHoveringControls = false
-    @State private var lastInteraction = Date.now
-    @State private var autoHideTimer: Timer?
     @State private var keyboardEventMonitor: Any? = nil
+    @State private var mouseMonitor: Any? = nil
     @State private var windowSize: CGSize = .zero
+    @State private var interactiveReady = false
 
     @State private var particles: [AmbientParticle] = []
     @State private var promptPulse: CGFloat = 0
@@ -99,7 +97,7 @@ struct ContentView: View {
                     .transition(.opacity)
             }
 
-            if !state.hasVideo {
+            if !state.hasVideo, interactiveReady {
                 openVideoPrompt
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
@@ -110,12 +108,13 @@ struct ContentView: View {
                     .allowsHitTesting(false)
             }
 
+            if interactiveReady {
             GeometryReader { geometry in
                 ZStack {
                     PlayerControlsView(state: state)
                 }
-                .opacity(areControlsVisible ? 1.0 : 0.0)
-                .scaleEffect(areControlsVisible ? 1 : 0.96)
+                .opacity(state.areControlsVisible ? 1.0 : 0.0)
+                .scaleEffect(state.areControlsVisible ? 1 : 0.96)
                 .background {
                     GeometryReader { proxy in
                         Color.clear.onAppear { controlsSize = proxy.size }
@@ -172,24 +171,21 @@ struct ContentView: View {
                             }
                         }
                 )
-                .onHover { hovering in
-                    isHoveringControls = hovering
-                    resetHideTimer()
-                }
+            }
             }
         }
         .background(appBackdrop)
-        .onContinuousHover { _ in
-            resetHideTimer()
-        }
         .onDrop(of: [UTType.fileURL.identifier], isTargeted: $isDropTargeted, perform: handleDrop)
         .animation(.spring(response: 0.34, dampingFraction: 0.82), value: state.hasVideo)
         .animation(.spring(response: 0.28, dampingFraction: 0.75), value: isDropTargeted)
         .onAppear {
-            startHideTimer()
+            state.startHideTimer()
             setupKeyboardMonitor()
             handleOpenURLs(AppDelegate.takePendingOpenURLs())
             generateParticles()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                interactiveReady = true
+            }
             if !state.hasVideo {
                 withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
                     promptPulse = 1.0
@@ -197,20 +193,20 @@ struct ContentView: View {
             }
         }
         .onDisappear {
-            stopHideTimer()
+            state.stopHideTimer()
             NSCursor.unhide()
             cleanupKeyboardMonitor()
             state.cleanup()
         }
         .onChange(of: state.isPlaying) {
-            resetHideTimer()
+            state.resetHideTimer()
         }
         .onChange(of: state.hasVideo) { hasVideo in
             if hasVideo {
                 withAnimation(.interactiveSpring) {
                     promptPulse = 0
                 }
-                resetHideTimer()
+                state.resetHideTimer()
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .riftOpenURLs)) { notification in
@@ -228,11 +224,15 @@ struct ContentView: View {
         return MTLCreateSystemDefaultDevice() != nil
     }
 
-    private static var sharedKeyboardMonitor: AnyObject?
-
     private func setupKeyboardMonitor() {
-        Self.cleanupSharedKeyboardMonitor()
-        let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+        cleanupKeyboardMonitor()
+        if mouseMonitor == nil {
+            mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .mouseMoved) { [state] event in
+                state.resetHideTimer()
+                return event
+            }
+        }
+        let monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [state] event in
             guard state.hasVideo else { return event }
 
             switch event.keyCode {
@@ -264,7 +264,7 @@ struct ContentView: View {
                 return nil
             case 4: // H - toggle controls
                 withAnimation(.spring(response: 0.36, dampingFraction: 0.85)) {
-                    areControlsVisible.toggle()
+                    state.areControlsVisible.toggle()
                 }
                 return nil
             case 18...21: // Number keys 1-4
@@ -282,14 +282,6 @@ struct ContentView: View {
             }
         }
         keyboardEventMonitor = monitor
-        Self.sharedKeyboardMonitor = monitor as AnyObject
-    }
-
-    private static func cleanupSharedKeyboardMonitor() {
-        if let existing = Self.sharedKeyboardMonitor {
-            NSEvent.removeMonitor(existing)
-            Self.sharedKeyboardMonitor = nil
-        }
     }
 
     private func cleanupKeyboardMonitor() {
@@ -297,35 +289,9 @@ struct ContentView: View {
             NSEvent.removeMonitor(monitor)
             keyboardEventMonitor = nil
         }
-    }
-
-    private func startHideTimer() {
-        autoHideTimer?.invalidate()
-        autoHideTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [self] _ in
-            MainActor.assumeIsolated {
-                guard areControlsVisible else { return }
-                guard state.hasVideo else { return }
-                guard Date.now.timeIntervalSince(lastInteraction) >= 5 else { return }
-                withAnimation(.spring(response: 0.36, dampingFraction: 0.85)) {
-                    areControlsVisible = false
-                }
-                NSCursor.hide()
-            }
-        }
-    }
-
-    private func stopHideTimer() {
-        autoHideTimer?.invalidate()
-        autoHideTimer = nil
-    }
-
-    private func resetHideTimer() {
-        lastInteraction = Date.now
-        if !areControlsVisible {
-            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
-                areControlsVisible = true
-            }
-            NSCursor.unhide()
+        if let monitor = mouseMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseMonitor = nil
         }
     }
 
@@ -541,7 +507,6 @@ struct ContentView: View {
         .ignoresSafeArea()
     }
 
-
     private func subtitleOverlay(_ text: String) -> some View {
         VStack {
             Spacer()
@@ -560,10 +525,10 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: 920)
                 .padding(.horizontal, 34)
-                .padding(.bottom, areControlsVisible ? 154 : 58)
+                .padding(.bottom, state.areControlsVisible ? 154 : 58)
         }
         .allowsHitTesting(false)
-        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: areControlsVisible)
+        .animation(.spring(response: 0.3, dampingFraction: 0.82), value: state.areControlsVisible)
     }
 
     private func handleDrop(_ providers: [NSItemProvider]) -> Bool {

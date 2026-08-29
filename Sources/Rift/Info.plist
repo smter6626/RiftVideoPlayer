@@ -28,5 +28,30 @@
 	<true/>
 	<key>LSUIElement</key>
 	<false/>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>Video File</string>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>LSHandlerRank</key>
+			<string>Default</string>
+			<key>LSItemContentTypes</key>
+			<array>
+				<string>public.movie</string>
+				<string>public.mpeg-4</string>
+				<string>public.mpeg</string>
+				<string>public.avi</string>
+				<string>public.mkv</string>
+				<string>public.3gpp</string>
+				<string>com.apple.quicktime-movie</string>
+				<string>com.microsoft.windows-media-wmv</string>
+				<string>com.microsoft.windows-media-wma</string>
+				<string>org.matroska.mkv</string>
+				<string>io.mp4</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>

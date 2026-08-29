@@ -70,6 +70,41 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
     @Published var directPlaybackURL: URL?
     @Published var usesNativeVideoLayer = false
 
+    @Published var areControlsVisible = true
+    var controlsAutoHideLastInteraction = Date()
+    var controlsAutoHideTimer: Timer?
+
+    func startHideTimer() {
+        controlsAutoHideTimer?.invalidate()
+        controlsAutoHideTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                guard self.areControlsVisible else { return }
+                guard self.hasVideo else { return }
+                guard Date.now.timeIntervalSince(self.controlsAutoHideLastInteraction) >= 5 else { return }
+                withAnimation(.spring(response: 0.36, dampingFraction: 0.85)) {
+                    self.areControlsVisible = false
+                }
+                NSCursor.hide()
+            }
+        }
+    }
+
+    func resetHideTimer() {
+        controlsAutoHideLastInteraction = Date.now
+        if !areControlsVisible {
+            withAnimation(.spring(response: 0.28, dampingFraction: 0.8)) {
+                areControlsVisible = true
+            }
+            NSCursor.unhide()
+        }
+    }
+
+    func stopHideTimer() {
+        controlsAutoHideTimer?.invalidate()
+        controlsAutoHideTimer = nil
+    }
+
     private var sleepAssertionID: IOPMAssertionID = 0
 
     private func preventSleep() {
