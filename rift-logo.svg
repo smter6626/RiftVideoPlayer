@@ -1,0 +1,92 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+
+  <defs>
+    <linearGradient id="playGradient" x1="420" y1="310" x2="640" y2="580" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#6A9DFF"/>
+      <stop offset="100%" stop-color="#4A4DFF"/>
+    </linearGradient>
+
+    <linearGradient id="foldGradient" x1="620" y1="620" x2="800" y2="790" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#F8F8FF"/>
+      <stop offset="100%" stop-color="#D8DBF3"/>
+    </linearGradient>
+
+    <filter id="shadow" x="140" y="140" width="760" height="760" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="10" stdDeviation="12" flood-opacity="0.12"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#shadow)">
+
+    <!-- Base -->
+    <path
+      d="
+        M320 240
+        H704
+        C784 240 848 304 848 384
+        V520
+        C848 575 825 627 784 664
+        L640 790
+        C602 823 554 842 504 842
+        H320
+        C240 842 176 778 176 698
+        V384
+        C176 304 240 240 320 240
+        Z"
+      fill="white"/>
+
+    <!-- Fold -->
+    <path
+      d="
+        M512 842
+        C560 842 606 824 640 790
+        L784 664
+        C818 633 838 596 848 548
+        C822 602 777 645 708 650
+        H676
+        C628 650 587 676 564 718
+        L541 759
+        C527 786 515 816 512 842
+        Z"
+      fill="url(#foldGradient)"/>
+
+    <!-- Play -->
+    <path
+      d="
+        M432 360
+        C432 333 461 317 484 332
+        L633 429
+        C654 443 654 473 633 487
+        L484 584
+        C461 599 432 583 432 556
+        Z"
+      fill="url(#playGradient)"/>
+
+    <!-- Progress Bar Background -->
+    <rect
+      x="260"
+      y="650"
+      width="320"
+      height="22"
+      rx="11"
+      fill="#D9DCF2"/>
+
+    <!-- Progress Fill -->
+    <rect
+      x="260"
+      y="650"
+      width="130"
+      height="22"
+      rx="11"
+      fill="url(#playGradient)"/>
+
+    <!-- Slider -->
+    <circle
+      cx="370"
+      cy="661"
+      r="32"
+      fill="url(#playGradient)"/>
+
+  </g>
+
+</svg>
