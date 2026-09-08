@@ -2,9 +2,7 @@
 
 ## 1. 源仓库
 
-- 源项目：[rafaelo96/RiftVideoPlayer](https://github.com/rafaelo96/RiftVideoPlayer)
-- 本地定制仓库：[smter6626/RiftVideoPlayer](https://github.com/smter6626/RiftVideoPlayer)
-- 本仓库基于源项目开发，面向本机实际播放体验进行定制；不会自动与源仓库的后续变更保持同步。
+本项目来自 [rafaelo96/RiftVideoPlayer](https://github.com/rafaelo96/RiftVideoPlayer)。
 
 ## 2. 本地的差异化改造
 
