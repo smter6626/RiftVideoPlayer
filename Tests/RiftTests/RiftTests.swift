@@ -61,3 +61,26 @@ struct FileValidationTests {
         #expect(!PlayerState.isValidVideoFile(url))
     }
 }
+
+struct ResourceLocatorTests {
+    @Test func macOSBundleResourceRootAndFlatCompatibility() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bundleURL = root.appendingPathComponent("Rift_Rift.bundle", isDirectory: true)
+        let resourcesURL = bundleURL.appendingPathComponent("Contents/Resources", isDirectory: true)
+        try FileManager.default.createDirectory(at: resourcesURL, withIntermediateDirectories: true)
+        let info: [String: Any] = [
+            "CFBundleIdentifier": "com.rift.tests.resources",
+            "CFBundleName": "Rift_Rift",
+            "CFBundlePackageType": "BNDL"
+        ]
+        let infoData = try PropertyListSerialization.data(fromPropertyList: info, format: .xml, options: 0)
+        try infoData.write(to: bundleURL.appendingPathComponent("Contents/Info.plist"))
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let roots = ResourceLocator.resourceBundleRoots(under: root)
+        let paths = Set(roots.map { $0.standardizedFileURL.path })
+        #expect(paths.contains(resourcesURL.standardizedFileURL.path))
+        #expect(paths.contains(bundleURL.standardizedFileURL.path))
+        #expect(paths.contains(bundleURL.appendingPathComponent("Resources", isDirectory: true).standardizedFileURL.path))
+    }
+}

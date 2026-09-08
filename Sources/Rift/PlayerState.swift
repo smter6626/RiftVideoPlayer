@@ -72,9 +72,18 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
     @Published var directPlaybackURL: URL?
     @Published var usesNativeVideoLayer = false
 
-    @Published var areControlsVisible = true
+    // 临时诊断：记录控制栏可见性转变，以关联显示合成节奏。
+    @Published var areControlsVisible = true {
+        didSet {
+            if ProcessInfo.processInfo.environment["RIFT_FRAME_DIAGNOSTICS"] == "1" {
+                print("RIFT_CONTROLS hostTime=\(CACurrentMediaTime()) visible=\(areControlsVisible)")
+                fflush(stdout)
+            }
+        }
+    }
     var controlsAutoHideLastInteraction = Date()
     var controlsAutoHideTimer: Timer?
+    private var isControlsInteractionActive = false
 
     func startHideTimer() {
         controlsAutoHideTimer?.invalidate()
@@ -83,6 +92,7 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
             MainActor.assumeIsolated {
                 guard self.areControlsVisible else { return }
                 guard self.hasVideo else { return }
+                guard !self.isControlsInteractionActive else { return }
                 guard Date.now.timeIntervalSince(self.controlsAutoHideLastInteraction) >= 5 else { return }
                 withAnimation(.spring(response: 0.36, dampingFraction: 0.85)) {
                     self.areControlsVisible = false
@@ -102,9 +112,15 @@ final class PlayerState: NSObject, ObservableObject, AVPlayerItemLegibleOutputPu
         }
     }
 
+    func setControlsInteractionActive(_ isActive: Bool) {
+        isControlsInteractionActive = isActive
+        resetHideTimer()
+    }
+
     func stopHideTimer() {
         controlsAutoHideTimer?.invalidate()
         controlsAutoHideTimer = nil
+        isControlsInteractionActive = false
     }
 
     private var sleepAssertionID: IOPMAssertionID = 0

@@ -26,3 +26,6 @@ deployed-fullpage.png
 local-fullpage.png
 release-page.png
 
+# Local diagnostics and editor backups
+*.bak
+monitor_rift.sh

@@ -29,6 +29,169 @@ private struct AmbientParticle: Identifiable {
     var delay: Double
 }
 
+private enum ControlsResizeEdge: Equatable {
+    case top
+    case bottom
+    case leading
+    case trailing
+
+    var cursor: NSCursor {
+        switch self {
+        case .top, .bottom:
+            return .resizeUpDown
+        case .leading, .trailing:
+            return .resizeLeftRight
+        }
+    }
+
+    func scaleDelta(for translation: CGSize, baseSize: CGSize) -> CGFloat {
+        switch self {
+        case .top:
+            return -translation.height / max(baseSize.height, 1)
+        case .bottom:
+            return translation.height / max(baseSize.height, 1)
+        case .leading:
+            return -translation.width / max(baseSize.width, 1)
+        case .trailing:
+            return translation.width / max(baseSize.width, 1)
+        }
+    }
+
+    func centerOffset(forScaleDelta scaleDelta: CGFloat, baseSize: CGSize) -> CGSize {
+        switch self {
+        case .top:
+            return CGSize(width: 0, height: -scaleDelta * baseSize.height / 2)
+        case .bottom:
+            return CGSize(width: 0, height: scaleDelta * baseSize.height / 2)
+        case .leading:
+            return CGSize(width: -scaleDelta * baseSize.width / 2, height: 0)
+        case .trailing:
+            return CGSize(width: scaleDelta * baseSize.width / 2, height: 0)
+        }
+    }
+}
+
+private enum ControlsInteraction: Equatable {
+    case move
+    case resize(ControlsResizeEdge)
+}
+
+private struct ControlsResizeHandle: View {
+    let edge: ControlsResizeEdge
+    let onChanged: (ControlsInteraction, CGSize) -> Void
+    let onEnded: (ControlsInteraction, CGSize) -> Void
+
+    @State private var isHovered = false
+    @State private var isDragging = false
+
+    var body: some View {
+        Color.clear
+            .contentShape(Rectangle())
+            .onHover { hovering in
+                isHovered = hovering
+                if hovering {
+                    edge.cursor.set()
+                } else if !isDragging {
+                    NSCursor.arrow.set()
+                }
+            }
+            .highPriorityGesture(
+                DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                    .onChanged { value in
+                        isDragging = true
+                        edge.cursor.set()
+                        onChanged(.resize(edge), value.translation)
+                    }
+                    .onEnded { value in
+                        isDragging = false
+                        onEnded(.resize(edge), value.translation)
+                        if !isHovered {
+                            NSCursor.arrow.set()
+                        }
+                    }
+            )
+            .accessibilityHidden(true)
+    }
+}
+
+private struct ControlsMoveHandle: View {
+    let onChanged: (ControlsInteraction, CGSize) -> Void
+    let onEnded: (ControlsInteraction, CGSize) -> Void
+
+    @State private var isHovered = false
+    @State private var isDragging = false
+
+    var body: some View {
+        ZStack {
+            Color.clear
+
+            Capsule()
+                .fill(.white.opacity(isHovered || isDragging ? 0.42 : 0.16))
+                .frame(width: 44, height: 3)
+        }
+        .contentShape(Rectangle())
+        .onHover { hovering in
+            isHovered = hovering
+            if hovering {
+                (isDragging ? NSCursor.closedHand : NSCursor.openHand).set()
+            } else if !isDragging {
+                NSCursor.arrow.set()
+            }
+        }
+        .gesture(
+            DragGesture(minimumDistance: 0, coordinateSpace: .global)
+                .onChanged { value in
+                    isDragging = true
+                    NSCursor.closedHand.set()
+                    onChanged(.move, value.translation)
+                }
+                .onEnded { value in
+                    isDragging = false
+                    onEnded(.move, value.translation)
+                    (isHovered ? NSCursor.openHand : NSCursor.arrow).set()
+                }
+        )
+        .accessibilityLabel(NSLocalizedString("Move Controls", comment: ""))
+        .help(NSLocalizedString("Drag to move controls", comment: ""))
+    }
+}
+
+private struct ControlsInteractionHandles: View {
+    let onChanged: (ControlsInteraction, CGSize) -> Void
+    let onEnded: (ControlsInteraction, CGSize) -> Void
+
+    private let hitWidth: CGFloat = 8
+
+    var body: some View {
+        GeometryReader { proxy in
+            let width = proxy.size.width.isFinite ? max(proxy.size.width, 0) : 0
+            let height = proxy.size.height.isFinite ? max(proxy.size.height, 0) : 0
+
+            ZStack {
+                ControlsResizeHandle(edge: .top, onChanged: onChanged, onEnded: onEnded)
+                    .frame(width: width, height: hitWidth)
+                    .position(x: width / 2, y: hitWidth / 2)
+
+                ControlsResizeHandle(edge: .bottom, onChanged: onChanged, onEnded: onEnded)
+                    .frame(width: width, height: hitWidth)
+                    .position(x: width / 2, y: max(hitWidth / 2, height - hitWidth / 2))
+
+                ControlsResizeHandle(edge: .leading, onChanged: onChanged, onEnded: onEnded)
+                    .frame(width: hitWidth, height: height)
+                    .position(x: hitWidth / 2, y: height / 2)
+
+                ControlsResizeHandle(edge: .trailing, onChanged: onChanged, onEnded: onEnded)
+                    .frame(width: hitWidth, height: height)
+                    .position(x: max(hitWidth / 2, width - hitWidth / 2), y: height / 2)
+
+                ControlsMoveHandle(onChanged: onChanged, onEnded: onEnded)
+                    .frame(width: 60, height: 8)
+                    .position(x: width / 2, y: 12)
+            }
+        }
+    }
+}
+
 struct ContentView: View {
     @StateObject private var state = PlayerState()
     @State private var isDropTargeted = false
@@ -42,10 +205,16 @@ struct ContentView: View {
     @State private var promptPulse: CGFloat = 0
 
     @State private var controlsPosition: CGPoint = .zero
-    @State private var controlsDrag: CGSize = .zero
     @State private var controlsSize: CGSize = .zero
     @State private var isPositionInitialized = false
-    @State private var isDraggingControls = false
+    @State private var controlsScale: CGFloat = 1
+    @State private var controlsInteraction: ControlsInteraction?
+    @State private var controlsInteractionStartPosition: CGPoint = .zero
+    @State private var controlsInteractionStartScale: CGFloat = 1
+
+    private let controlsBoundaryMargin: CGFloat = 8
+    private let controlsScaleRange: ClosedRange<CGFloat> = 0.65...1.35
+    private let controlsResizeKeepsOppositeEdgeFixed = false
 
     var body: some View {
         ZStack {
@@ -110,67 +279,76 @@ struct ContentView: View {
 
             if interactiveReady {
             GeometryReader { geometry in
-                ZStack {
-                    PlayerControlsView(state: state)
-                }
-                .opacity(state.areControlsVisible ? 1.0 : 0.0)
-                .scaleEffect(state.areControlsVisible ? 1 : 0.96)
-                .background {
-                    GeometryReader { proxy in
-                        Color.clear.onAppear { controlsSize = proxy.size }
-                    }
-                }
-                .position(
-                    x: controlsPosition.x + controlsDrag.width,
-                    y: controlsPosition.y + controlsDrag.height
-                )
-                .scaleEffect(isDraggingControls ? 0.98 : 1)
-                .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isDraggingControls)
-                .onAppear {
-                    guard !isPositionInitialized else { return }
-                    controlsPosition = CGPoint(x: geometry.size.width / 2, y: geometry.size.height - 82)
-                    windowSize = geometry.size
-                    isPositionInitialized = true
-                }
-                .onChange(of: geometry.size) { _, newSize in
-                    guard windowSize.width > 0, windowSize.height > 0 else { return }
-                    let ratioX = controlsPosition.x / windowSize.width
-                    let ratioY = controlsPosition.y / windowSize.height
-                    controlsPosition = CGPoint(x: ratioX * newSize.width, y: ratioY * newSize.height)
-                    windowSize = newSize
-                }
-                .gesture(
-                    DragGesture()
-                        .onChanged { value in
-                            controlsDrag = value.translation
-                            isDraggingControls = true
-                        }
-                        .onEnded { value in
-                            let margin: CGFloat = 8
-                            let halfW = controlsSize.width / 2
-                            let halfH = controlsSize.height / 2
-                            let w = geometry.size.width
-                            let h = geometry.size.height
-                            var newX = controlsPosition.x + value.translation.width
-                            var newY = controlsPosition.y + value.translation.height
-                            newX = max(halfW + margin, min(w - halfW - margin, newX))
-                            newY = max(halfH + margin, min(h - halfH - margin, newY))
-                            controlsPosition = CGPoint(x: newX, y: newY)
-                            controlsDrag = .zero
-                            isDraggingControls = false
-                        }
-                )
-                .simultaneousGesture(
-                    TapGesture(count: 2)
-                        .onEnded {
-                            let w = geometry.size.width
-                            let h = geometry.size.height
-                            withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                                controlsPosition = CGPoint(x: w / 2, y: h - 82)
-                                controlsDrag = .zero
+                PlayerControlsView(state: state)
+                    .overlay {
+                        ControlsInteractionHandles(
+                            onChanged: { interaction, translation in
+                                updateControlsInteraction(
+                                    interaction,
+                                    translation: translation,
+                                    in: geometry.size
+                                )
+                            },
+                            onEnded: { interaction, translation in
+                                finishControlsInteraction(
+                                    interaction,
+                                    translation: translation,
+                                    in: geometry.size
+                                )
                             }
+                        )
+                    }
+                    .opacity(state.areControlsVisible ? 1.0 : 0.0)
+                    .scaleEffect(controlsScale)
+                    .scaleEffect(state.areControlsVisible ? 1 : 0.96)
+                    .allowsHitTesting(state.areControlsVisible)
+                    .background {
+                        GeometryReader { proxy in
+                            Color.clear
+                                .onAppear { updateControlsSize(proxy.size, in: geometry.size) }
+                                .onChange(of: proxy.size) { _, newSize in
+                                    updateControlsSize(newSize, in: geometry.size)
+                                }
                         }
-                )
+                    }
+                    .position(
+                        x: controlsPosition.x,
+                        y: controlsPosition.y
+                    )
+                    .scaleEffect(controlsInteraction == .move ? 0.98 : 1)
+                    .animation(.spring(response: 0.2, dampingFraction: 0.8), value: controlsInteraction)
+                    .onAppear {
+                        guard !isPositionInitialized else { return }
+                        controlsPosition = CGPoint(x: geometry.size.width / 2, y: geometry.size.height - 82)
+                        windowSize = geometry.size
+                        isPositionInitialized = true
+                    }
+                    .onChange(of: geometry.size) { _, newSize in
+                        guard windowSize.width > 0, windowSize.height > 0 else { return }
+                        let ratioX = controlsPosition.x / windowSize.width
+                        let ratioY = controlsPosition.y / windowSize.height
+                        let proposedPosition = CGPoint(x: ratioX * newSize.width, y: ratioY * newSize.height)
+                        controlsPosition = clampedControlsPosition(
+                            proposedPosition,
+                            in: newSize,
+                            scale: controlsScale
+                        )
+                        windowSize = newSize
+                    }
+                    .simultaneousGesture(
+                        TapGesture(count: 2)
+                            .onEnded {
+                                let w = geometry.size.width
+                                let h = geometry.size.height
+                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
+                                    controlsPosition = clampedControlsPosition(
+                                        CGPoint(x: w / 2, y: h - 82),
+                                        in: geometry.size,
+                                        scale: controlsScale
+                                    )
+                                }
+                            }
+                    )
             }
             }
         }
@@ -209,9 +387,8 @@ struct ContentView: View {
                 state.resetHideTimer()
             }
         }
-        .onReceive(NotificationCenter.default.publisher(for: .riftOpenURLs)) { notification in
-            let urls = notification.userInfo?["urls"] as? [URL] ?? []
-            handleOpenURLs(urls)
+        .onReceive(NotificationCenter.default.publisher(for: .riftOpenURLs)) { _ in
+            handleOpenURLs(AppDelegate.takePendingOpenURLs())
         }
         .onReceive(NotificationCenter.default.publisher(for: .riftOpenVideo)) { _ in
             state.openVideo()
@@ -222,6 +399,168 @@ struct ContentView: View {
     private var usesMetalRenderer: Bool {
         guard !state.usesNativeVideoLayer else { return false }
         return MTLCreateSystemDefaultDevice() != nil
+    }
+
+    private func updateControlsSize(_ newSize: CGSize, in windowSize: CGSize) {
+        guard newSize.width > 0,
+              newSize.height > 0,
+              newSize.width.isFinite,
+              newSize.height.isFinite else {
+            return
+        }
+        controlsSize = newSize
+        guard isPositionInitialized else { return }
+        controlsPosition = clampedControlsPosition(
+            controlsPosition,
+            in: windowSize,
+            scale: controlsScale
+        )
+    }
+
+    private func updateControlsInteraction(
+        _ interaction: ControlsInteraction,
+        translation: CGSize,
+        in windowSize: CGSize
+    ) {
+        guard controlsSize.width > 0,
+              controlsSize.height > 0,
+              controlsSize.width.isFinite,
+              controlsSize.height.isFinite,
+              windowSize.width.isFinite,
+              windowSize.height.isFinite,
+              translation.width.isFinite,
+              translation.height.isFinite else {
+            return
+        }
+
+        if controlsInteraction == nil {
+            controlsInteraction = interaction
+            controlsInteractionStartPosition = controlsPosition
+            controlsInteractionStartScale = controlsScale
+            state.setControlsInteractionActive(true)
+        }
+
+        guard controlsInteraction == interaction else { return }
+        state.resetHideTimer()
+
+        switch interaction {
+        case .move:
+            let proposedPosition = CGPoint(
+                x: controlsInteractionStartPosition.x + translation.width,
+                y: controlsInteractionStartPosition.y + translation.height
+            )
+            controlsPosition = clampedControlsPosition(
+                proposedPosition,
+                in: windowSize,
+                scale: controlsScale
+            )
+
+        case let .resize(edge):
+            let scaleSensitivity: CGFloat = controlsResizeKeepsOppositeEdgeFixed ? 1 : 2
+            let requestedScale = controlsInteractionStartScale
+                + edge.scaleDelta(for: translation, baseSize: controlsSize) * scaleSensitivity
+            let maximumFittingScale = min(
+                (windowSize.width - controlsBoundaryMargin * 2) / controlsSize.width,
+                (windowSize.height - controlsBoundaryMargin * 2) / controlsSize.height
+            )
+            let maximumScale = max(
+                controlsScaleRange.lowerBound,
+                min(controlsScaleRange.upperBound, maximumFittingScale)
+            )
+            let newScale = max(
+                controlsScaleRange.lowerBound,
+                min(maximumScale, requestedScale)
+            )
+            let appliedScaleDelta = newScale - controlsInteractionStartScale
+            let centerOffset = controlsResizeKeepsOppositeEdgeFixed
+                ? edge.centerOffset(
+                    forScaleDelta: appliedScaleDelta,
+                    baseSize: controlsSize
+                )
+                : .zero
+            let proposedPosition = CGPoint(
+                x: controlsInteractionStartPosition.x + centerOffset.width,
+                y: controlsInteractionStartPosition.y + centerOffset.height
+            )
+
+            controlsScale = newScale
+            controlsPosition = clampedControlsPosition(
+                proposedPosition,
+                in: windowSize,
+                scale: newScale
+            )
+        }
+    }
+
+    private func finishControlsInteraction(
+        _ interaction: ControlsInteraction,
+        translation: CGSize,
+        in windowSize: CGSize
+    ) {
+        updateControlsInteraction(interaction, translation: translation, in: windowSize)
+        guard controlsInteraction == interaction else { return }
+
+        controlsPosition = clampedControlsPosition(
+            controlsPosition,
+            in: windowSize,
+            scale: controlsScale
+        )
+        controlsInteraction = nil
+        controlsInteractionStartPosition = .zero
+        controlsInteractionStartScale = controlsScale
+        state.setControlsInteractionActive(false)
+    }
+
+    private func clampedControlsPosition(
+        _ proposedPosition: CGPoint,
+        in windowSize: CGSize,
+        scale: CGFloat
+    ) -> CGPoint {
+        guard proposedPosition.x.isFinite,
+              proposedPosition.y.isFinite,
+              windowSize.width.isFinite,
+              windowSize.height.isFinite,
+              controlsSize.width.isFinite,
+              controlsSize.height.isFinite,
+              scale.isFinite else {
+            return CGPoint(
+                x: controlsPosition.x.isFinite ? controlsPosition.x : 0,
+                y: controlsPosition.y.isFinite ? controlsPosition.y : 0
+            )
+        }
+
+        let halfWidth = controlsSize.width * scale / 2
+        let halfHeight = controlsSize.height * scale / 2
+        let minimumX = halfWidth + controlsBoundaryMargin
+        let maximumX = windowSize.width - halfWidth - controlsBoundaryMargin
+        let minimumY = halfHeight + controlsBoundaryMargin
+        let maximumY = windowSize.height - halfHeight - controlsBoundaryMargin
+
+        let x = minimumX <= maximumX
+            ? max(minimumX, min(maximumX, proposedPosition.x))
+            : windowSize.width / 2
+        let y = minimumY <= maximumY
+            ? max(minimumY, min(maximumY, proposedPosition.y))
+            : windowSize.height / 2
+        return CGPoint(x: x, y: y)
+    }
+
+    private var subtitleBottomPadding: CGFloat {
+        let defaultPadding: CGFloat = 58
+        guard state.areControlsVisible,
+              controlsSize.height > 0,
+              windowSize.height > 0 else {
+            return defaultPadding
+        }
+
+        let scaledHalfHeight = controlsSize.height * controlsScale / 2
+        let controlsTop = controlsPosition.y - scaledHalfHeight
+        let controlsBottom = controlsPosition.y + scaledHalfHeight
+        guard controlsBottom > windowSize.height / 2 else {
+            return defaultPadding
+        }
+
+        return max(defaultPadding, windowSize.height - controlsTop + 16)
     }
 
     private func setupKeyboardMonitor() {
@@ -525,7 +864,7 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: 920)
                 .padding(.horizontal, 34)
-                .padding(.bottom, state.areControlsVisible ? 154 : 58)
+                .padding(.bottom, subtitleBottomPadding)
         }
         .allowsHitTesting(false)
         .animation(.spring(response: 0.3, dampingFraction: 0.82), value: state.areControlsVisible)

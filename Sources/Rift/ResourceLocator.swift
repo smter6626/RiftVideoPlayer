@@ -38,9 +38,18 @@ enum ResourceLocator {
     }
 
     private static func appendResourceBundleRoots(under parent: URL, to roots: inout [URL]) {
+        roots.append(contentsOf: resourceBundleRoots(under: parent))
+    }
+
+    static func resourceBundleRoots(under parent: URL) -> [URL] {
         let bundleURL = parent.appendingPathComponent(riftResourceBundleName, isDirectory: true)
-        roots.append(bundleURL)
+        var roots = [bundleURL]
+        if let resourceURL = Bundle(url: bundleURL)?.resourceURL {
+            roots.append(resourceURL)
+            roots.append(resourceURL.appendingPathComponent("Resources", isDirectory: true))
+        }
         roots.append(bundleURL.appendingPathComponent("Resources", isDirectory: true))
+        return roots
     }
 
     private static func uniqueExistingDirectories(_ urls: [URL]) -> [URL] {

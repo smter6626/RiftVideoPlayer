@@ -43,6 +43,7 @@ final class FramePlusMEMCEngine {
         estimatePipeline = try Self.pipeline(named: "memcEstimateMotion", library: library, device: device)
         filterPipeline = try Self.pipeline(named: "memcFilterVectors", library: library, device: device)
         warpPipeline = try Self.pipeline(named: "memcWarp", library: library, device: device)
+        Self.diagnosticLog("memcEngineLoaded=true functions=memcDownsample,memcEstimateMotion,memcFilterVectors,memcWarp")
     }
 
     func encode(
@@ -80,15 +81,23 @@ final class FramePlusMEMCEngine {
 
     private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
         if let library = device.makeDefaultLibrary() {
+            diagnosticLog("resolvedResourcePath=<default.metallib>")
             return library
         }
 
         if let url = ResourceLocator.url(forResource: "FramePlusMEMC", withExtension: "metal") {
+            diagnosticLog("resolvedResourcePath=\(url.path)")
             let source = try String(contentsOf: url)
             return try device.makeLibrary(source: source, options: nil)
         }
 
         throw FramePlusMEMCError.library
+    }
+
+    private static func diagnosticLog(_ message: String) {
+        guard ProcessInfo.processInfo.environment["RIFT_FRAME_DIAGNOSTICS"] == "1" else { return }
+        print("RIFT_MEMC \(message)")
+        fflush(stdout)
     }
 
     private static func pipeline(named name: String, library: MTLLibrary, device: MTLDevice) throws -> MTLComputePipelineState {

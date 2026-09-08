@@ -107,6 +107,8 @@ final class MetalVideoView: MTKView {
 
 @MainActor
 final class MetalVideoRenderer: NSObject, MTKViewDelegate {
+    // 临时诊断：仅 RIFT_FRAME_DIAGNOSTICS=1 启用，不改变渲染决策。
+    private let frameDiagnostics = ProcessInfo.processInfo.environment["RIFT_FRAME_DIAGNOSTICS"] == "1" ? RiftFrameDiagnostics() : nil
     private weak var player: AVPlayer?
     private weak var attachedItem: AVPlayerItem?
     private var fpsMode: FPSMode = .native
@@ -458,25 +460,38 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) { }
 
     func draw(in view: MTKView) {
+        let diagnosticStart = frameDiagnostics == nil ? 0 : CACurrentMediaTime()
+        frameDiagnostics?.increment("callbacks")
+        defer {
+            frameDiagnostics?.duration("drawCPU", since: diagnosticStart)
+            frameDiagnostics?.report(view: view, player: player, framePlus: interpolationMode == .motion2Intense, visual: visualEnhancementsEnabled, sourceFPS: sourceFrameRate)
+        }
         autoreleasepool {
             drawFrame(in: view)
         }
     }
 
     private func drawFrame(in view: MTKView) {
-        guard let drawable = view.currentDrawable,
+        let drawableStart = frameDiagnostics == nil ? 0 : CACurrentMediaTime()
+        let diagnosticDrawable = view.currentDrawable
+        frameDiagnostics?.duration("drawableWait", since: drawableStart)
+        if diagnosticDrawable != nil { frameDiagnostics?.increment("drawable") }
+        guard let drawable = diagnosticDrawable,
               let commandBuffer = commandQueue?.makeCommandBuffer(),
               let ciContext,
               let output = videoOutput,
               let player else { return }
 
+        frameDiagnostics?.increment("commandBuffers")
         let hostTime = CACurrentMediaTime()
         let isPlaying = player.timeControlStatus == .playing
         let itemTime = isPlaying ? output.itemTime(forHostTime: hostTime) : player.currentTime()
 
         if output.hasNewPixelBuffer(forItemTime: itemTime) {
+            frameDiagnostics?.increment("hasNewSource")
             var displayTime = CMTime.invalid
             if let frame = output.copyPixelBuffer(forItemTime: itemTime, itemTimeForDisplay: &displayTime) {
+                frameDiagnostics?.increment("copiedSource")
                 let frameTime = normalizedSourceFrameTime(displayTime.isValid ? displayTime : itemTime)
                 let oldFrame = sourceFrames.last?.pixelBuffer ?? latestFrame
                 let oldFrameTime = sourceFrames.last?.time ?? latestFrameTime
@@ -526,13 +541,16 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
             }
         }
 
+        let imageStart = frameDiagnostics == nil ? 0 : CACurrentMediaTime()
         guard let frame = image(
             for: itemTime,
             hostTime: hostTime,
             drawableSize: view.drawableSize,
             commandBuffer: commandBuffer
-        ) else { return }
-
+        ) else { frameDiagnostics?.increment("imageNil"); return }
+        frameDiagnostics?.duration("imageCPU", since: imageStart)
+        frameDiagnostics?.increment("images")
+        frameDiagnostics?.increment("recorded")
         recordRenderedFrame(frame)
 
         let displayImage = visualEnhancementsEnabled
@@ -542,6 +560,7 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
             ? detailBoosted(aspectFit(displayImage, in: view.drawableSize))
             : aspectFit(displayImage, in: view.drawableSize)
         let dithered = applyDithering(fittedImage)
+        let ciStart = frameDiagnostics == nil ? 0 : CACurrentMediaTime()
         ciContext.render(
             dithered,
             to: drawable.texture,
@@ -549,7 +568,19 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
             bounds: CGRect(origin: .zero, size: view.drawableSize),
             colorSpace: renderColorSpace
         )
+        frameDiagnostics?.duration("ciCPU", since: ciStart)
+        if let diagnostics = frameDiagnostics {
+            let submitted = CACurrentMediaTime()
+            commandBuffer.addCompletedHandler { buffer in
+                diagnostics.increment("completed")
+                diagnostics.duration("completionLatency", since: submitted)
+                diagnostics.value("gpu", milliseconds: (buffer.gpuEndTime - buffer.gpuStartTime) * 1000)
+                if buffer.status == .error { diagnostics.increment("gpuErrors") }
+            }
+            drawable.addPresentedHandler { shown in diagnostics.presented(at: shown.presentedTime) }
+        }
         commandBuffer.present(drawable)
+        frameDiagnostics?.increment("presentSubmitted")
         commandBuffer.commit()
     }
 
@@ -569,6 +600,9 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
         timestep: Float,
         commandBuffer: MTLCommandBuffer
     ) -> CIImage? {
+        let memcStart = frameDiagnostics == nil ? 0 : CACurrentMediaTime()
+        frameDiagnostics?.increment("memcAttempts")
+        defer { frameDiagnostics?.duration("memcCPU", since: memcStart) }
         guard let framePlusEngine,
               let textureCache,
               CVPixelBufferGetWidth(current) == CVPixelBufferGetWidth(next),
@@ -639,6 +673,7 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
             return nil
         }
 
+        frameDiagnostics?.increment("memcGenerated")
         propagateColorAttachments(from: next, to: pixelBuffer)
         return ciImage(from: pixelBuffer, fallbackSource: next)
     }
@@ -846,6 +881,7 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
                 )
             }
 
+            frameDiagnostics?.increment("fallback")
             return InterpolatedImage(
                 image: interpolatedImage(
                     previousImage: prevCI,
@@ -1225,6 +1261,7 @@ final class MetalVideoRenderer: NSObject, MTKViewDelegate {
             ? (sourceFrameRate.flatMap { $0.isFinite && $0 > 0 ? $0 : nil } ?? drawLoopFPS)
             : drawLoopFPS
 
+        frameDiagnostics?.value("uiFPS", milliseconds: reportedFPS)
         statsHandler?(VideoRenderStats(
             renderingFPS: reportedFPS,
             isArtificialInterpolationActive: isInterpolationActive,
@@ -1351,4 +1388,58 @@ private enum MEMCIntensity {
     var warpStrength: Double { 1.0 }
     var mix: Double { 0.96 }
     var occlusionThreshold: Double { 0.28 }
+}
+
+// 临时诊断：跨GPU回调采用短锁；每秒只输出一条JSON，未启用时不安装回调。
+private final class RiftFrameDiagnostics: @unchecked Sendable {
+    private let lock = NSLock()
+    private var counts: [String: Int] = [:]
+    private var sums: [String: Double] = [:]
+    private var samples: [String: Int] = [:]
+    private var maxima: [String: Double] = [:]
+    private var start = CACurrentMediaTime()
+    private var lastPresented = 0.0
+    func increment(_ key: String) {
+        lock.lock(); defer { lock.unlock() }
+        counts[key, default: 0] += 1
+    }
+    func value(_ key: String, milliseconds: Double) {
+        lock.lock(); defer { lock.unlock() }
+        sums[key, default: 0] += milliseconds
+        samples[key, default: 0] += 1
+        maxima[key] = max(maxima[key] ?? 0, milliseconds)
+    }
+    func duration(_ key: String, since: Double) { value(key, milliseconds: (CACurrentMediaTime() - since) * 1000) }
+    func presented(at time: Double) {
+        lock.lock(); defer { lock.unlock() }
+        counts["presented", default: 0] += 1
+        if lastPresented > 0, time > lastPresented {
+            let ms = (time - lastPresented) * 1000
+            sums["presentInterval", default: 0] += ms
+            samples["presentInterval", default: 0] += 1
+            maxima["presentInterval"] = max(maxima["presentInterval"] ?? 0, ms)
+            counts["interval_\(Int(ms.rounded()))ms", default: 0] += 1
+        }
+        lastPresented = time
+    }
+    @MainActor func report(view: MTKView, player: AVPlayer?, framePlus: Bool, visual: Bool, sourceFPS: Double?) {
+        let now = CACurrentMediaTime()
+        lock.lock()
+        let elapsed = now - start
+        guard elapsed >= 1 else { lock.unlock(); return }
+        var averages: [String: Double] = [:]
+        for (k, v) in sums { averages[k] = v / Double(samples[k] ?? 1) }
+        let row: [String: Any] = ["hostTime": now, "elapsed": elapsed, "counts": counts, "averages_ms_except_uiFPS": averages, "max_ms_except_uiFPS": maxima,
+          "targetFPS": view.preferredFramesPerSecond, "screenMaxFPS": view.window?.screen?.maximumFramesPerSecond ?? 0,
+          "drawableWidth": view.drawableSize.width, "drawableHeight": view.drawableSize.height,
+          "framePlus": framePlus, "visual": visual, "sourceFPS": sourceFPS ?? 0, "rate": player?.rate ?? 0,
+          "itemSeconds": player?.currentTime().seconds ?? 0, "windowVisible": view.window?.isVisible ?? false,
+          "occlusionVisible": view.window?.occlusionState.contains(.visible) ?? false, "appActive": NSApp.isActive]
+        counts.removeAll(keepingCapacity: true); sums.removeAll(keepingCapacity: true); samples.removeAll(keepingCapacity: true); maxima.removeAll(keepingCapacity: true); start = now
+        lock.unlock()
+        if let data = try? JSONSerialization.data(withJSONObject: row, options: [.sortedKeys]), let text = String(data: data, encoding: .utf8) {
+            print("RIFT_DIAG " + text)
+            fflush(stdout)
+        }
+    }
 }
