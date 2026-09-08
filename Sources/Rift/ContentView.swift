@@ -207,10 +207,10 @@ struct ContentView: View {
     @State private var controlsPosition: CGPoint = .zero
     @State private var controlsSize: CGSize = .zero
     @State private var isPositionInitialized = false
-    @State private var controlsScale: CGFloat = 1
+    @State private var controlsScale: CGFloat = 0.65
     @State private var controlsInteraction: ControlsInteraction?
     @State private var controlsInteractionStartPosition: CGPoint = .zero
-    @State private var controlsInteractionStartScale: CGFloat = 1
+    @State private var controlsInteractionStartScale: CGFloat = 0.65
 
     private let controlsBoundaryMargin: CGFloat = 8
     private let controlsScaleRange: ClosedRange<CGFloat> = 0.65...1.35
@@ -298,10 +298,10 @@ struct ContentView: View {
                             }
                         )
                     }
-                    .opacity(state.areControlsVisible ? 1.0 : 0.0)
+                    .opacity(state.areControlsVisible && isPositionInitialized ? 1.0 : 0.0)
                     .scaleEffect(controlsScale)
                     .scaleEffect(state.areControlsVisible ? 1 : 0.96)
-                    .allowsHitTesting(state.areControlsVisible)
+                    .allowsHitTesting(state.areControlsVisible && isPositionInitialized)
                     .background {
                         GeometryReader { proxy in
                             Color.clear
@@ -318,10 +318,8 @@ struct ContentView: View {
                     .scaleEffect(controlsInteraction == .move ? 0.98 : 1)
                     .animation(.spring(response: 0.2, dampingFraction: 0.8), value: controlsInteraction)
                     .onAppear {
-                        guard !isPositionInitialized else { return }
-                        controlsPosition = CGPoint(x: geometry.size.width / 2, y: geometry.size.height - 82)
                         windowSize = geometry.size
-                        isPositionInitialized = true
+                        initializeControlsPositionIfPossible(in: geometry.size)
                     }
                     .onChange(of: geometry.size) { _, newSize in
                         guard windowSize.width > 0, windowSize.height > 0 else { return }
@@ -335,20 +333,6 @@ struct ContentView: View {
                         )
                         windowSize = newSize
                     }
-                    .simultaneousGesture(
-                        TapGesture(count: 2)
-                            .onEnded {
-                                let w = geometry.size.width
-                                let h = geometry.size.height
-                                withAnimation(.spring(response: 0.4, dampingFraction: 0.7)) {
-                                    controlsPosition = clampedControlsPosition(
-                                        CGPoint(x: w / 2, y: h - 82),
-                                        in: geometry.size,
-                                        scale: controlsScale
-                                    )
-                                }
-                            }
-                    )
             }
             }
         }
@@ -408,12 +392,38 @@ struct ContentView: View {
               newSize.height.isFinite else {
             return
         }
+        let wasPositionInitialized = isPositionInitialized
         controlsSize = newSize
-        guard isPositionInitialized else { return }
+        if !wasPositionInitialized {
+            initializeControlsPositionIfPossible(in: windowSize)
+            return
+        }
         controlsPosition = clampedControlsPosition(
             controlsPosition,
             in: windowSize,
             scale: controlsScale
+        )
+    }
+
+    private func initializeControlsPositionIfPossible(in windowSize: CGSize) {
+        guard !isPositionInitialized,
+              controlsSize.width > 0,
+              controlsSize.height > 0,
+              windowSize.width > 0,
+              windowSize.height > 0,
+              windowSize.width.isFinite,
+              windowSize.height.isFinite else {
+            return
+        }
+
+        controlsPosition = bottomLeftControlsPosition(in: windowSize, scale: controlsScale)
+        isPositionInitialized = true
+    }
+
+    private func bottomLeftControlsPosition(in windowSize: CGSize, scale: CGFloat) -> CGPoint {
+        CGPoint(
+            x: controlsSize.width * scale / 2 + controlsBoundaryMargin,
+            y: windowSize.height - controlsSize.height * scale / 2 - controlsBoundaryMargin
         )
     }
 
